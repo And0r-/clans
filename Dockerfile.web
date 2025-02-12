@@ -1,0 +1,10 @@
+# Verwende das offizielle Nginx-Image
+FROM nginx:stable-alpine
+
+# Kopiere den Web-Build in den Ordner, den Nginx standardmäßig bedient
+COPY build/web /usr/share/nginx/html
+
+# Exponiere Port 80 (Standard für HTTP)
+EXPOSE 80
+
+# Der Nginx-Server startet automatisch
