@@ -20,48 +20,51 @@ class CountdownView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text('Event: ${activeEvent['name']}', style: TextStyle(fontSize: 24)),
-          SizedBox(height: 20),
-          Text(formatDuration(remainingSeconds),
-              style: TextStyle(fontSize: 48)),
-          SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ElevatedButton(
-                onPressed: () {
-                  socketService
-                      .emit('adjustTimer', {'adjustmentInSeconds': 60});
-                },
-                child: Text('+1 min'),
-              ),
-              SizedBox(width: 20),
-              ElevatedButton(
-                onPressed: () {
-                  socketService
-                      .emit('adjustTimer', {'adjustmentInSeconds': -60});
-                },
-                child: Text('-1 min'),
-              ),
-            ],
-          ),
-          SizedBox(height: 20),
-          // Neuer Button "Für alle abbrechen"
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(
+          'Event: ${activeEvent['name']}',
+          style: TextStyle(fontSize: 24),
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: 20),
+        Text(
+          formatDuration(remainingSeconds),
+          style: TextStyle(fontSize: 48),
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: 20),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ElevatedButton(
+              onPressed: () {
+                socketService.emit('adjustTimer', {'adjustmentInSeconds': 60});
+              },
+              child: Text('+1 min'),
             ),
-            onPressed: () {
-              socketService.emit('abortTimer', {});
-            },
-            child: Text('Für alle abbrechen'),
+            SizedBox(width: 20),
+            ElevatedButton(
+              onPressed: () {
+                socketService.emit('adjustTimer', {'adjustmentInSeconds': -60});
+              },
+              child: Text('-1 min'),
+            ),
+          ],
+        ),
+        SizedBox(height: 20),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
           ),
-        ],
-      ),
+          onPressed: () {
+            socketService.emit('abortTimer', {});
+          },
+          child: Text('Für alle abbrechen'),
+        ),
+      ],
     );
   }
 }

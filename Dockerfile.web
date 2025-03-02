@@ -1,10 +1,23 @@
-# Verwende das offizielle Nginx-Image
+# Dockerfile.web
+
+# --- STAGE 1: Bauen des Flutter Web-Builds ---
+FROM ghcr.io/cirruslabs/flutter:stable AS build
+WORKDIR /app
+
+# Kopiere nur pubspec.* zuerst für optimiertes Caching
+COPY pubspec.* ./
+RUN flutter pub get
+
+# Nun den Rest des Codes kopieren
+COPY . .
+
+# Erzeuge den Web-Build im Release-Modus
+RUN flutter build web --release
+
+# --- STAGE 2: Nginx als Webserver ---
 FROM nginx:stable-alpine
+# Kopiere das Ergebnis aus Stage 1 in Nginx
+COPY --from=build /app/build/web /usr/share/nginx/html
 
-# Kopiere den Web-Build in den Ordner, den Nginx standardmäßig bedient
-COPY build/web /usr/share/nginx/html
-
-# Exponiere Port 80 (Standard für HTTP)
 EXPOSE 80
-
-# Der Nginx-Server startet automatisch
+CMD ["nginx", "-g", "daemon off;"]

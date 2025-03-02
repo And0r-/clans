@@ -1,38 +1,56 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
-  <base href="$FLUTTER_BASE_HREF">
-
-  <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
-
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="idle_clans_tools">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>idle_clans_tools</title>
-  <link rel="manifest" href="manifest.json">
-</head>
-<body>
-  <script src="flutter_bootstrap.js" async></script>
-</body>
+  <head>
+    <meta charset="UTF-8">
+    <title>Idle Clans App Container</title>
+    <style>
+      body {
+        margin: 0;
+        background-color: #f0f0f0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        font-family: sans-serif;
+      }
+      /* Container für die App */
+      #app-container {
+        width: 400px;
+        height: 700px;
+        box-shadow: 0 0 10px rgba(0,0,0,0.2);
+        border-radius: 12px;
+        overflow: hidden;
+        background: white;
+        margin-bottom: 20px;
+      }
+      /* Download-Buttons */
+      .download-buttons {
+        display: flex;
+        gap: 20px;
+      }
+      .download-buttons a {
+        text-decoration: none;
+        background-color: #6200EE;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 16px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        transition: background-color 0.3s;
+      }
+      .download-buttons a:hover {
+        background-color: #3700B3;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app-container">
+      <iframe src="app.html" style="width: 100%; height: 100%; border: none;"></iframe>
+    </div>
+    <div class="download-buttons">
+      <a href="/download/clans.zip" target="_blank">Windows Download</a>
+      <a href="/download/clans.apk" target="_blank">Android Download</a>
+    </div>
+  </body>
 </html>

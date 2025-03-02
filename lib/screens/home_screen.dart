@@ -1,9 +1,12 @@
+// lib/screens/home_screen.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/socket_service.dart';
 import '../widgets/event_list.dart';
 import '../widgets/countdown_view.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -15,7 +18,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic>? activeEvent;
   int remainingSeconds = 0;
   Timer? countdownTimer;
-  // AudioPlayer-Instanz
   final AudioPlayer audioPlayer = AudioPlayer();
 
   @override
@@ -61,12 +63,9 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           remainingSeconds = updatedRemaining;
         });
-        // Wenn der Timer abgelaufen ist:
         if (updatedRemaining == 0) {
           timer.cancel();
-          // Akustisches Signal abspielen
           playNotificationSound();
-          // Wechsel zurück zur Event-Liste (Home Screen)
           setState(() {
             activeEvent = null;
           });
@@ -76,8 +75,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> playNotificationSound() async {
-    // Spielt den Sound aus dem Asset ab.
-    // Stelle sicher, dass die Datei assets/sounds/notification.mp3 existiert und in pubspec.yaml referenziert wird.
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    double volume = prefs.getDouble('notificationVolume') ?? 0.5;
+    await audioPlayer.setVolume(volume);
     await audioPlayer.play(AssetSource('sounds/notification.mp3'));
   }
 
@@ -94,22 +94,43 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Idle Clans Helper'),
+        centerTitle: true,
         actions: [
           IconButton(
-            icon: Icon(Icons.notifications),
+            icon: Icon(Icons.settings),
             onPressed: () {
-              _socketService.emit('triggerNotification', {});
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => SettingsScreen()),
+              );
             },
           )
         ],
       ),
-      body: activeEvent == null
-          ? EventList(socketService: _socketService)
-          : CountdownView(
-              activeEvent: activeEvent!,
-              remainingSeconds: remainingSeconds,
-              socketService: _socketService,
+      body: Column(
+        children: [
+          Expanded(
+            child: activeEvent == null
+                ? EventList(socketService: _socketService)
+                : CountdownView(
+                    activeEvent: activeEvent!,
+                    remainingSeconds: remainingSeconds,
+                    socketService: _socketService,
+                  ),
+          ),
+          if (activeEvent == null)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  _socketService.emit('triggerNotification', {});
+                },
+                icon: Icon(Icons.notifications),
+                label: Text("Audio an alle senden"),
+              ),
             ),
+        ],
+      ),
     );
   }
 }

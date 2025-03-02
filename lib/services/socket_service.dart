@@ -4,7 +4,7 @@ class SocketService {
   IO.Socket socket;
 
   SocketService._internal()
-      : socket = IO.io('http://dev.local:3009', <String, dynamic>{
+      : socket = IO.io('http://localhost:3009', <String, dynamic>{
           'transports': ['websocket'],
           'autoConnect': true,
         }) {
