@@ -42,6 +42,7 @@ let clanSettings = {
 };
 
 let activeEvent = null;
+let connectionCount = 0;
 
 /**
  * REST-Endpoints
@@ -59,74 +60,74 @@ app.post('/api/settings', (req, res) => {
   res.json(clanSettings);
 });
 
-/**
- * Socket.io Events
- */
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+    connectionCount++;
+    io.emit('connectionCount', connectionCount);
+    console.log(`Client connected: ${socket.id}. Total: ${connectionCount}`);
 
-  // Sende, falls ein Event bereits läuft, den aktuellen Status an den neuen Client
-  if (activeEvent) {
-    socket.emit('eventStarted', activeEvent);
-  }
-
-  // Event: Start eines Clan-Events
-  socket.on('startEvent', (data) => {
+    // Sende, falls ein Event bereits läuft, den aktuellen Status an den neuen Client
     if (activeEvent) {
-      socket.emit('error', { message: 'Ein Event läuft bereits. Bitte abbrechen, bevor ein neues gestartet wird.' });
-      console.log(`Neuer Startversuch abgelehnt, da bereits ein Event läuft: ${JSON.stringify(activeEvent)}`);
-      return;
+        socket.emit('eventStarted', activeEvent);
     }
-    activeEvent = {
-      ...data,
-      startTime: Date.now(),
-      duration: data.duration
-    };
-    io.emit('eventStarted', activeEvent);
-    console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
-  });
 
-  // Event: Anpassung des Countdowns
-  socket.on('adjustTimer', (adjustment) => {
-    if (activeEvent) {
-      activeEvent.duration += adjustment.adjustmentInSeconds;
-      if (activeEvent.duration < 0) activeEvent.duration = 0;
-      io.emit('timerAdjusted', activeEvent);
-      console.log(`Timer angepasst: ${JSON.stringify(activeEvent)}`);
-    }
-  });
+    // Event: Start eines Clan-Events
+    socket.on('startEvent', (data) => {
+        if (activeEvent) {
+            socket.emit('error', { message: 'Ein Event läuft bereits. Bitte abbrechen, bevor ein neues gestartet wird.' });
+            console.log(`Neuer Startversuch abgelehnt, da bereits ein Event läuft: ${JSON.stringify(activeEvent)}`);
+            return;
+        }
+        activeEvent = {
+            ...data,
+            startTime: Date.now(),
+            duration: data.duration
+        };
+        io.emit('eventStarted', activeEvent);
+        console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
+    });
 
-  socket.on('abortTimer', () => {
-    activeEvent = null;
-    io.emit('timerAborted', {});
-    console.log('Timer aborted for all clients.');
-  });
+    // Event: Anpassung des Countdowns
+    socket.on('adjustTimer', (adjustment) => {
+        if (activeEvent) {
+            activeEvent.duration += adjustment.adjustmentInSeconds;
+            if (activeEvent.duration < 0) activeEvent.duration = 0;
+            io.emit('timerAdjusted', activeEvent);
+            console.log(`Timer angepasst: ${JSON.stringify(activeEvent)}`);
+        }
+    });
 
-  // Event: Manuelles Auslösen des akustischen Signals (Notification)
-  socket.on('triggerNotification', () => {
-    io.emit('playNotification');
-    console.log('Manuelle Notification ausgelöst');
-  });
+    socket.on('abortTimer', () => {
+        activeEvent = null;
+        io.emit('timerAborted', {});
+        console.log('Timer aborted for all clients.');
+    });
 
-  socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
-  });
+    socket.on('triggerNotification', () => {
+        io.emit('playNotification');
+        console.log('Manuelle Notification ausgelöst');
+    });
+
+    socket.on('disconnect', () => {
+        connectionCount--;
+        io.emit('connectionCount', connectionCount);
+        console.log(`Client disconnected: ${socket.id}. Total: ${connectionCount}`);
+    });
 });
 
-// Periodischer Check, ob das aktive Event abgelaufen ist
+// Optional: Periodischer Check für abgelaufene Events (wie gehabt)
 setInterval(() => {
-  if (activeEvent) {
-    const elapsedSeconds = (Date.now() - activeEvent.startTime) / 1000;
-    if (elapsedSeconds >= activeEvent.duration) {
-      io.emit('timerExpired');
-      console.log(`Event abgelaufen: ${JSON.stringify(activeEvent)} – activeEvent wird zurückgesetzt.`);
-      activeEvent = null;
+    if (activeEvent) {
+        const elapsedSeconds = (Date.now() - activeEvent.startTime) / 1000;
+        if (elapsedSeconds >= activeEvent.duration) {
+            io.emit('timerExpired');
+            console.log(`Event abgelaufen: ${JSON.stringify(activeEvent)} – activeEvent wird zurückgesetzt.`);
+            activeEvent = null;
+        }
     }
-  }
 }, 1000);
 
-// Starte den Server
 const PORT = process.env.PORT || 3009;
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
+

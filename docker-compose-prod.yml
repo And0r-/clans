@@ -1,0 +1,25 @@
+version: "3.8"
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "8080:80"
+    volumes:
+      # Optional: Falls du während der Entwicklung Änderungen direkt mounten möchtest
+      # - ./build/web:/usr/share/nginx/html:ro
+      - ./download:/usr/share/nginx/html/download:ro
+
+  backend:
+    build:
+      context: ./api_backend
+      dockerfile: Dockerfile.backend
+    ports:
+      - "3009:3009"
+    volumes:
+      - ./api_backend:/usr/src/app:cached
+      # - /usr/src/app/node_modules
+    environment:
+      - NODE_ENV=production
+      - API_TOKEN=${API_TOKEN}

@@ -17,6 +17,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final SocketService _socketService = SocketService();
   Map<String, dynamic>? activeEvent;
   int remainingSeconds = 0;
+  int connectionCount = 0;
   Timer? countdownTimer;
   final AudioPlayer audioPlayer = AudioPlayer();
 
@@ -47,6 +48,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _socketService.on('playNotification', (_) {
       playNotificationSound();
+    });
+    _socketService.on('connectionCount', (data) {
+      setState(() {
+        connectionCount = data;
+      });
+      print("Aktuelle Verbindunganzahl: $connectionCount");
     });
   }
 
@@ -93,9 +100,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Idle Clans Helper'),
+        title: Text('Idle Clans'),
         centerTitle: true,
         actions: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Text(
+                '$connectionCount User',
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+          ),
           IconButton(
             icon: Icon(Icons.settings),
             onPressed: () {
