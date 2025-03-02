@@ -1,4 +1,18 @@
 version: "3.8"
+
+x-logging:
+  &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://10.100.126.2:3100/loki/api/v1/push"
+    loki-batch-size: "400"
+    loki-retries: "2"
+    loki-timeout: "1s"
+    loki-max-backoff: "800ms"
+    keep-file: "true"
+    max-size: "50m"
+    max-file: "3"
+
 services:
   web:
     build:
@@ -10,6 +24,7 @@ services:
       # Optional: Falls du während der Entwicklung Änderungen direkt mounten möchtest
       # - ./build/web:/usr/share/nginx/html:ro
       - ./download:/usr/share/nginx/html/download:ro
+    logging: *loki-logging
 
   backend:
     build:
@@ -23,3 +38,4 @@ services:
     environment:
       - NODE_ENV=production
       - API_TOKEN=${API_TOKEN}
+    logging: *loki-logging
