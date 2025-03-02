@@ -39,3 +39,4 @@ build/
 /android/app/release
 /android/app/.cxx
 /download/
+.env

@@ -1,13 +1,19 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class SocketService {
   IO.Socket socket;
 
   SocketService._internal()
-      : socket = IO.io('http://localhost:3009', <String, dynamic>{
-          'transports': ['websocket'],
-          'autoConnect': true,
-        }) {
+      : socket = IO.io(
+            dotenv.env['BACKEND_URL'] ?? 'http://localhost:3009',
+            <String, dynamic>{
+              'transports': ['websocket'],
+              'autoConnect': true,
+              'query': {
+                'token': dotenv.env['API_TOKEN'] ?? '',
+              },
+            }) {
     socket.onConnect((_) {
       print('Connected to backend');
     });

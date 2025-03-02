@@ -1,11 +1,12 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:window_size/window_size.dart';
 import 'screens/home_screen.dart';
 import 'widgets/platform_wrapper.dart';
 
-void main() {
+Future main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Nur für native Plattformen (nicht Web) ausführen
@@ -16,6 +17,7 @@ void main() {
     setWindowFrame(const Rect.fromLTWH(100, 100, 360, 640));
   }
 
+  await dotenv.load(fileName: ".env");
   runApp(MyApp());
 }
 
