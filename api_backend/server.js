@@ -51,110 +51,10 @@ const eventMapping = {
   "SkillingParty": { name: "Skilling Gruppe", duration: 2 * 60 }
 };
 
-// Für das Handling von Event-Sequenzen und Race Conditions
-let pendingStopTimeoutId = null;
+// Tracking für Webhook Event-Serie
 let lastEventType = null;
-let eventSequence = {}; // Tracking für event sequenzen und timestamps
-
-/**
- * Helper function to start an event
- */
-function startEvent(eventType, timestamp = Date.now()) {
-  // Für Sequence Tracking: Neuen Start registrieren
-  if (!eventSequence[eventType]) {
-    eventSequence[eventType] = { 
-      lastStart: timestamp,
-      lastStop: 0,
-      count: 0
-    };
-  } else {
-    eventSequence[eventType].lastStart = timestamp;
-    eventSequence[eventType].count++;
-  }
-  
-  // Wenn gleicher Event-Typ bereits läuft, nichts tun
-  if (activeEvent && activeEvent.id === eventType) {
-    console.log(`Event bereits aktiv: ${eventType}, ignoriere weiteren Start`);
-    return true;
-  }
-  
-  // Wenn wir bereits einen Stop für diesen Typ erhalten haben, 
-  // aber der Start zeitlich VOR dem Stop liegt (Race Condition),
-  // ignorieren wir den veralteten Stop
-  if (pendingStopTimeoutId && lastEventType === eventType) {
-    if (eventSequence[eventType].lastStop > 0 && 
-        timestamp < eventSequence[eventType].lastStop) {
-      console.log(`Start-Ereignis (${timestamp}) liegt vor Stop-Ereignis (${eventSequence[eventType].lastStop}), ignoriere verzögerten Stop`);
-      clearTimeout(pendingStopTimeoutId);
-      pendingStopTimeoutId = null;
-    }
-  }
-  
-  const mapped = eventMapping[eventType];
-  if (!mapped) {
-    console.log(`Unbekannter Event-Typ: ${eventType}`);
-    return false;
-  }
-
-  if (activeEvent) {
-    console.log(`Stoppe laufendes Event ${activeEvent.id} um ${eventType} zu starten`);
-    // Implizit das aktuelle Event stoppen bevor wir ein neues starten
-  }
-
-  // Alle laufenden Stop-Operationen abbrechen
-  if (pendingStopTimeoutId) {
-    clearTimeout(pendingStopTimeoutId);
-    pendingStopTimeoutId = null;
-  }
-
-  activeEvent = {
-    id: eventType,
-    name: mapped.name,
-    duration: mapped.duration,
-    startTime: timestamp
-  };
-  
-  io.emit('eventStarted', activeEvent);
-  console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
-  lastEventType = eventType;
-  return true;
-}
-
-/**
- * Helper function to stop an event with optional delay
- */
-function stopEvent(eventType, immediate = false) {
-  // If no event is running or the types don't match, nothing to do
-  if (!activeEvent || activeEvent.id !== eventType) {
-    console.log(`No matching active event to stop: ${eventType}`);
-    return false;
-  }
-
-  // If we should stop immediately
-  if (immediate) {
-    console.log(`Immediately stopping event: ${eventType}`);
-    activeEvent = null;
-    io.emit('timerAborted', {});
-    return true;
-  }
-
-  // Otherwise set up a delayed stop to handle possible start/stop sequences
-  if (pendingStopTimeoutId) {
-    clearTimeout(pendingStopTimeoutId);
-  }
-
-  console.log(`Scheduling delayed stop for event: ${eventType}`);
-  pendingStopTimeoutId = setTimeout(() => {
-    console.log(`Executing delayed stop for event: ${eventType}`);
-    if (activeEvent && activeEvent.id === eventType) {
-      activeEvent = null;
-      io.emit('timerAborted', {});
-    }
-    pendingStopTimeoutId = null;
-  }, 2000); // 2 second delay to wait for possible restart
-
-  return true;
-}
+let lastEventTime = 0;
+const EVENT_SERIES_THRESHOLD = 5000; // Schwellwert in ms (5 Sekunden)
 
 /**
  * REST-Endpoints
@@ -172,50 +72,111 @@ app.post('/api/settings', (req, res) => {
   res.json(clanSettings);
 });
 
-// New webhook endpoint for minigame events
+// Webhook endpoint für Minigame Events
 app.post('/minigame/:action/:type', (req, res) => {
   const { action, type } = req.params;
   const metadata = req.body?.metadata || {};
+  const now = Date.now();
   
-  console.log(`Webhook received: ${action}/${type} from player: ${metadata.playerName || 'unknown'}`);
+  console.log(`Webhook empfangen: ${action}/${type} von Spieler: ${metadata.playerName || 'unbekannt'}`);
   
   if (!eventMapping[type]) {
     return res.status(400).json({ 
-      error: 'Unknown event type',
+      error: 'Unbekannter Event-Typ',
       received: type,
       available: Object.keys(eventMapping)
     });
   }
 
-  let result = false;
-  
+  // Aktionen verarbeiten
   if (action === 'start') {
-    result = startEvent(type);
-  } else if (action === 'stop') {
-    result = stopEvent(type);
-  } else {
-    return res.status(400).json({ 
-      error: 'Unknown action',
-      received: action,
-      available: ['start', 'stop']
-    });
-  }
-
-  if (result) {
+    // Wenn kein Event aktiv ist, starten wir ein neues
+    if (!activeEvent) {
+      activeEvent = {
+        id: type,
+        name: eventMapping[type].name,
+        duration: eventMapping[type].duration,
+        startTime: now
+      };
+      
+      io.emit('eventStarted', activeEvent);
+      console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
+    } 
+    // Event gleichen Typs bereits aktiv - nichts tun, nur bestätigen
+    else if (activeEvent && activeEvent.id === type) {
+      console.log(`Event bereits aktiv: ${type}, ignoriere weiteren Start`);
+    }
+    // Anderer Event-Typ aktiv - warnen, aber weiterlaufen lassen
+    else {
+      console.log(`Warnung: Startanfrage für ${type} erhalten, aber anderer Typ ${activeEvent.id} ist aktiv`);
+    }
+    
+    // Event-Serie tracking aktualisieren
+    lastEventType = type;
+    lastEventTime = now;
+    
     return res.status(200).json({ 
       success: true, 
-      message: `Event ${action} processed for ${type}`,
+      message: `Startevent für ${type} verarbeitet`,
       activeEvent: activeEvent ? {
         id: activeEvent.id,
         name: activeEvent.name,
         duration: activeEvent.duration,
-        elapsedSeconds: Math.floor((Date.now() - activeEvent.startTime) / 1000)
+        elapsedSeconds: Math.floor((now - activeEvent.startTime) / 1000)
       } : null
     });
-  } else {
+  } 
+  else if (action === 'stop') {
+    // Prüfen ob stopEvent Teil einer laufenden Serie ist
+    const isPartOfSeries = 
+      type === lastEventType && 
+      (now - lastEventTime) < EVENT_SERIES_THRESHOLD;
+    
+    // Event-Serie tracking aktualisieren
+    lastEventType = type;
+    lastEventTime = now;
+    
+    // Wenn Event Teil einer Serie ist und der passende Event-Typ ist aktiv
+    if (isPartOfSeries && activeEvent && activeEvent.id === type) {
+      console.log(`Stop-Event für ${type} erkannt, aber es scheint Teil einer Serie zu sein. Timer läuft weiter.`);
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: `Stopevent für ${type} erkannt (Teil einer Serie - Timer läuft weiter)`,
+        activeEvent: activeEvent ? {
+          id: activeEvent.id,
+          name: activeEvent.name,
+          duration: activeEvent.duration,
+          elapsedSeconds: Math.floor((now - activeEvent.startTime) / 1000)
+        } : null,
+        isSeries: true
+      });
+    }
+    // Wenn Event nicht Teil einer Serie ist oder falscher Typ aktiv ist
+    else {
+      if (activeEvent && activeEvent.id === type) {
+        console.log(`Stop-Event für ${type} erkannt, kein Teil einer Serie - Timer wird gestoppt`);
+        // Bei Serie-Ende wird Timer auf 0 gesetzt um Notification auszulösen
+        activeEvent.duration = 0;
+        io.emit('timerExpired', activeEvent);
+        activeEvent = null;
+      } else {
+        console.log(`Kein passendes aktives Event zum Stoppen: ${type}`);
+      }
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: `Stopevent für ${type} verarbeitet`,
+        activeEvent: null,
+        isSeries: false
+      });
+    }
+  } 
+  else {
     return res.status(400).json({ 
-      success: false, 
-      message: `Could not ${action} event of type ${type}`
+      error: 'Unbekannte Aktion',
+      received: action,
+      available: ['start', 'stop']
     });
   }
 });
@@ -233,12 +194,21 @@ io.on('connection', (socket) => {
 
   socket.on('startEvent', (data) => {
     const eventType = data.id;
-    const timestamp = Date.now();
     
-    // Nutze die gemeinsame startEvent-Funktion für konsistente Behandlung
-    if (!startEvent(eventType, timestamp)) {
-      socket.emit('error', { message: 'Event konnte nicht gestartet werden.' });
+    // Bei direktem Start aus der App einen neuen Event starten
+    if (activeEvent) {
+      socket.emit('error', { message: 'Ein Event läuft bereits. Bitte abbrechen, bevor ein neuer gestartet wird.' });
+      console.log(`Neuer Start abgelehnt, da bereits Event läuft: ${JSON.stringify(activeEvent)}`);
+      return;
     }
+    
+    activeEvent = {
+      ...data,
+      startTime: Date.now(),
+      duration: data.duration
+    };
+    io.emit('eventStarted', activeEvent);
+    console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
   });
 
   socket.on('adjustTimer', (adjustment) => {
@@ -246,22 +216,16 @@ io.on('connection', (socket) => {
       activeEvent.duration += adjustment.adjustmentInSeconds;
       if (activeEvent.duration < 0) activeEvent.duration = 0;
       io.emit('timerAdjusted', activeEvent);
-      console.log(`Timer adjusted: ${JSON.stringify(activeEvent)}`);
+      console.log(`Timer angepasst: ${JSON.stringify(activeEvent)}`);
     }
   });
 
   socket.on('abortTimer', () => {
-    if (pendingStopTimeoutId) {
-      clearTimeout(pendingStopTimeoutId);
-      pendingStopTimeoutId = null;
-    }
-    
+    // Sofortiger Abbruch, IMMER, wenn es aus der App kommt
     if (activeEvent) {
-      // Für Konsistenz setzen wir auch hier den Timer auf 0
-      // statt ihn einfach zu löschen
       activeEvent.duration = 0;
       io.emit('timerExpired', activeEvent);
-      console.log(`Timer expired (aborted): ${JSON.stringify(activeEvent)}`);
+      console.log(`Timer abgelaufen (abgebrochen): ${JSON.stringify(activeEvent)}`);
       activeEvent = null;
     } else {
       io.emit('timerAborted', {});
@@ -271,7 +235,7 @@ io.on('connection', (socket) => {
 
   socket.on('triggerNotification', () => {
     io.emit('playNotification');
-    console.log('Manual notification triggered');
+    console.log('Manuelle Benachrichtigung ausgelöst');
   });
 
   socket.on('disconnect', () => {
@@ -281,13 +245,13 @@ io.on('connection', (socket) => {
   });
 });
 
-// Existing periodic check for expired events
+// Regelmäßige Prüfung für abgelaufene Events
 setInterval(() => {
   if (activeEvent) {
     const elapsedSeconds = (Date.now() - activeEvent.startTime) / 1000;
     if (elapsedSeconds >= activeEvent.duration) {
       io.emit('timerExpired', activeEvent);
-      console.log(`Event expired naturally: ${JSON.stringify(activeEvent)} – activeEvent reset.`);
+      console.log(`Event natürlich abgelaufen: ${JSON.stringify(activeEvent)} – activeEvent zurückgesetzt.`);
       activeEvent = null;
     }
   }
@@ -295,5 +259,5 @@ setInterval(() => {
 
 const PORT = process.env.PORT || 3009;
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server läuft auf Port ${PORT}`);
 });
