@@ -7,10 +7,11 @@ class EventList extends StatelessWidget {
   EventList({required this.socketService});
 
   final List<Map<String, dynamic>> events = [
-    {'id': 'sammel', 'name': 'Sammel', 'duration': 12 * 60},
-    {'id': 'herstellung', 'name': 'Herstellung', 'duration': 8 * 60},
-    {'id': 'kampferfahrung', 'name': 'Kampferfahrung', 'duration': 20 * 60},
-    {'id': 'kampfbelohnung', 'name': 'Kampfbelohnung', 'duration': 20 * 60},
+    {'id': 'Gathering', 'name': 'Sammel', 'duration': 12 * 60},
+    {'id': 'Crafting', 'name': 'Herstellung', 'duration': 8 * 60},
+    {'id': 'CombatBigExpDaily', 'name': 'Kampferfahrung', 'duration': 20 * 60},
+    {'id': 'CombatBigLootDaily', 'name': 'Kampfbelohnung', 'duration': 20 * 60},
+    {'id': 'SkillingParty', 'name': 'Skilling Gruppe', 'duration': 2 * 60},
   ];
 
   @override
