@@ -7,42 +7,43 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Read API_TOKEN from environment variables
+// API_TOKEN aus den Umgebungsvariablen lesen
 const REQUIRED_API_TOKEN = process.env.API_TOKEN || '';
 
-// Middleware to check the API token for all REST requests
+// Middleware zur Überprüfung des API-Tokens
 const checkApiToken = (req, res, next) => {
   const token = req.headers['authorization'] || req.query.token;
   if (REQUIRED_API_TOKEN && token !== REQUIRED_API_TOKEN) {
-    return res.status(403).json({ error: 'Invalid API Token' });
+    return res.status(403).json({ error: 'Ungültiges API-Token' });
   }
   next();
 };
 
-// Apply token check middleware to all routes
+// Token-Überprüfung auf alle Routen anwenden
 app.use(checkApiToken);
 
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: "*" } });
 
-// Socket.IO middleware for checking the API token
+// Socket.IO Middleware zur Überprüfung des API-Tokens
 io.use((socket, next) => {
   const token = socket.handshake.query.token;
   if (REQUIRED_API_TOKEN && token !== REQUIRED_API_TOKEN) {
-    return next(new Error('Authentication error'));
+    return next(new Error('Authentifizierungsfehler'));
   }
   next();
 });
 
-// Global variables for settings and active event
+// Globale Variablen für Einstellungen und aktives Event
 let clanSettings = {
-  eventStartTime: "20:00" // default
+  eventStartTime: "20:00" // Standard
 };
 
 let activeEvent = null;
 let connectionCount = 0;
+let pendingSeriesTimeout = null;
 
-// Mapping for event types
+// Mapping für Event-Typen
 const eventMapping = {
   "Gathering": { name: "Sammel", duration: 12 * 60 },
   "Crafting": { name: "Herstellung", duration: 8 * 60 },
@@ -51,14 +52,22 @@ const eventMapping = {
   "SkillingParty": { name: "Skilling Gruppe", duration: 2 * 60 }
 };
 
-// Tracking für Webhook Event-Serie
-let lastEventType = null;
-let lastEventTime = 0;
-const EVENT_SERIES_THRESHOLD = 5000; // Schwellwert in ms (5 Sekunden)
+// Schwellwert für die Serienerkennung (in ms)
+const SERIES_GAP_THRESHOLD = 5000; // 5 Sekunden Lücke zwischen Stop und Start
 
 /**
  * REST-Endpoints
  */
+
+// Debug-Endpunkt zum Überprüfen des aktuellen Status
+app.get('/debug/status', (req, res) => {
+  res.json({
+    activeEvent,
+    connectionCount,
+    pendingSeriesTimeout: pendingSeriesTimeout !== null,
+    mappedEvents: eventMapping
+  });
+});
 
 // GET /api/settings
 app.get('/api/settings', (req, res) => {
@@ -72,13 +81,14 @@ app.post('/api/settings', (req, res) => {
   res.json(clanSettings);
 });
 
-// Webhook endpoint für Minigame Events
+/**
+ * Webhook-Endpunkt für Minigame-Events
+ */
 app.post('/minigame/:action/:type', (req, res) => {
   const { action, type } = req.params;
   const metadata = req.body?.metadata || {};
-  const now = Date.now();
   
-  console.log(`Webhook empfangen: ${action}/${type} von Spieler: ${metadata.playerName || 'unbekannt'}`);
+  console.log(`Webhook empfangen: ${action}/${type} von ${metadata.playerName || 'unbekannt'}`);
   
   if (!eventMapping[type]) {
     return res.status(400).json({ 
@@ -88,89 +98,33 @@ app.post('/minigame/:action/:type', (req, res) => {
     });
   }
 
-  // Aktionen verarbeiten
   if (action === 'start') {
-    // Wenn kein Event aktiv ist, starten wir ein neues
-    if (!activeEvent) {
-      activeEvent = {
-        id: type,
-        name: eventMapping[type].name,
-        duration: eventMapping[type].duration,
-        startTime: now
-      };
-      
-      io.emit('eventStarted', activeEvent);
-      console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
-    } 
-    // Event gleichen Typs bereits aktiv - nichts tun, nur bestätigen
-    else if (activeEvent && activeEvent.id === type) {
-      console.log(`Event bereits aktiv: ${type}, ignoriere weiteren Start`);
-    }
-    // Anderer Event-Typ aktiv - warnen, aber weiterlaufen lassen
-    else {
-      console.log(`Warnung: Startanfrage für ${type} erhalten, aber anderer Typ ${activeEvent.id} ist aktiv`);
-    }
-    
-    // Event-Serie tracking aktualisieren
-    lastEventType = type;
-    lastEventTime = now;
+    handleEventStart(type);
     
     return res.status(200).json({ 
       success: true, 
-      message: `Startevent für ${type} verarbeitet`,
+      message: `Start-Event für ${type} verarbeitet`,
       activeEvent: activeEvent ? {
         id: activeEvent.id,
         name: activeEvent.name,
         duration: activeEvent.duration,
-        elapsedSeconds: Math.floor((now - activeEvent.startTime) / 1000)
+        elapsedSeconds: Math.floor((Date.now() - activeEvent.startTime) / 1000)
       } : null
     });
   } 
   else if (action === 'stop') {
-    // Prüfen ob stopEvent Teil einer laufenden Serie ist
-    const isPartOfSeries = 
-      type === lastEventType && 
-      (now - lastEventTime) < EVENT_SERIES_THRESHOLD;
+    handleEventStop(type);
     
-    // Event-Serie tracking aktualisieren
-    lastEventType = type;
-    lastEventTime = now;
-    
-    // Wenn Event Teil einer Serie ist und der passende Event-Typ ist aktiv
-    if (isPartOfSeries && activeEvent && activeEvent.id === type) {
-      console.log(`Stop-Event für ${type} erkannt, aber es scheint Teil einer Serie zu sein. Timer läuft weiter.`);
-      
-      return res.status(200).json({ 
-        success: true, 
-        message: `Stopevent für ${type} erkannt (Teil einer Serie - Timer läuft weiter)`,
-        activeEvent: activeEvent ? {
-          id: activeEvent.id,
-          name: activeEvent.name,
-          duration: activeEvent.duration,
-          elapsedSeconds: Math.floor((now - activeEvent.startTime) / 1000)
-        } : null,
-        isSeries: true
-      });
-    }
-    // Wenn Event nicht Teil einer Serie ist oder falscher Typ aktiv ist
-    else {
-      if (activeEvent && activeEvent.id === type) {
-        console.log(`Stop-Event für ${type} erkannt, kein Teil einer Serie - Timer wird gestoppt`);
-        // Bei Serie-Ende wird Timer auf 0 gesetzt um Notification auszulösen
-        activeEvent.duration = 0;
-        io.emit('timerExpired', activeEvent);
-        activeEvent = null;
-      } else {
-        console.log(`Kein passendes aktives Event zum Stoppen: ${type}`);
-      }
-      
-      return res.status(200).json({ 
-        success: true, 
-        message: `Stopevent für ${type} verarbeitet`,
-        activeEvent: null,
-        isSeries: false
-      });
-    }
+    return res.status(200).json({ 
+      success: true, 
+      message: `Stop-Event für ${type} verarbeitet`,
+      activeEvent: activeEvent ? {
+        id: activeEvent.id,
+        name: activeEvent.name,
+        duration: activeEvent.duration,
+        elapsedSeconds: Math.floor((Date.now() - activeEvent.startTime) / 1000)
+      } : null
+    });
   } 
   else {
     return res.status(400).json({ 
@@ -181,36 +135,108 @@ app.post('/minigame/:action/:type', (req, res) => {
   }
 });
 
-// Endpoints für minigameserie wurden entfernt, da sie nur Tests waren
+/**
+ * Behandelt den Start eines Events
+ */
+function handleEventStart(eventType) {
+  // Wenn es einen ausstehenden Timeout für Serienende gibt, löschen wir ihn
+  if (pendingSeriesTimeout) {
+    console.log(`Start von ${eventType} erkannt während eines ausstehenden Series-Timeouts - Serie wird fortgesetzt`);
+    clearTimeout(pendingSeriesTimeout);
+    pendingSeriesTimeout = null;
+  }
 
+  // Wenn kein Event aktiv ist, starten wir ein neues
+  if (!activeEvent) {
+    console.log(`Starte neues Event: ${eventType}`);
+    activeEvent = {
+      id: eventType,
+      name: eventMapping[eventType].name,
+      duration: eventMapping[eventType].duration,
+      startTime: Date.now()
+    };
+    
+    io.emit('eventStarted', activeEvent);
+    console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
+  }
+  // Wenn ein Event des gleichen Typs bereits läuft, nichts tun
+  else if (activeEvent.id === eventType) {
+    console.log(`Event vom Typ ${eventType} läuft bereits, ignoriere Start`);
+  }
+  // Wenn ein Event eines anderen Typs läuft
+  else {
+    console.log(`Warnung: Event vom Typ ${eventType} soll gestartet werden, aber ${activeEvent.id} läuft bereits`);
+  }
+}
+
+/**
+ * Behandelt das Stoppen eines Events
+ */
+function handleEventStop(eventType) {
+  // Wenn kein Event läuft oder falscher Typ, nichts tun
+  if (!activeEvent || activeEvent.id !== eventType) {
+    console.log(`Kein passendes aktives Event zum Stoppen: ${eventType}`);
+    return;
+  }
+
+  // Timeout für mögliches Serienende setzen
+  console.log(`Stop für ${eventType} erkannt - warte auf möglichen Serienfolge-Start`);
+  
+  // Wenn bereits ein Timeout existiert, löschen
+  if (pendingSeriesTimeout) {
+    clearTimeout(pendingSeriesTimeout);
+  }
+  
+  // Neuen Timeout setzen
+  pendingSeriesTimeout = setTimeout(() => {
+    console.log(`Keine Folge-Events erkannt für ${eventType} innerhalb des Schwellwerts - Serie scheint beendet`);
+    
+    if (activeEvent && activeEvent.id === eventType) {
+      console.log(`Timer wird auf 0 gesetzt, da Serie beendet wurde`);
+      const eventToExpire = {...activeEvent};
+      activeEvent = null;
+      
+      // Timer auf 0 setzen und Benachrichtigung auslösen
+      eventToExpire.duration = 0;
+      io.emit('timerExpired', eventToExpire);
+    }
+    
+    pendingSeriesTimeout = null;
+  }, SERIES_GAP_THRESHOLD);
+}
+
+/**
+ * Socket.IO Event-Handler
+ */
 io.on('connection', (socket) => {
   connectionCount++;
   io.emit('connectionCount', connectionCount);
-  console.log(`Client connected: ${socket.id}. Total: ${connectionCount}`);
+  console.log(`Client verbunden: ${socket.id}. Gesamt: ${connectionCount}`);
 
+  // Sende aktuellen Event-Status an neuen Client
   if (activeEvent) {
     socket.emit('eventStarted', activeEvent);
   }
 
+  // Event starten (von Flutter-App)
   socket.on('startEvent', (data) => {
     const eventType = data.id;
     
-    // Bei direktem Start aus der App einen neuen Event starten
+    // App kann nur starten, wenn kein Event läuft
     if (activeEvent) {
-      socket.emit('error', { message: 'Ein Event läuft bereits. Bitte abbrechen, bevor ein neuer gestartet wird.' });
-      console.log(`Neuer Start abgelehnt, da bereits Event läuft: ${JSON.stringify(activeEvent)}`);
+      socket.emit('error', { message: 'Ein Event läuft bereits. Bitte zuerst abbrechen.' });
       return;
     }
     
     activeEvent = {
       ...data,
-      startTime: Date.now(),
-      duration: data.duration
+      startTime: Date.now()
     };
     io.emit('eventStarted', activeEvent);
-    console.log(`Event gestartet: ${JSON.stringify(activeEvent)}`);
+    console.log(`Event von App gestartet: ${JSON.stringify(activeEvent)}`);
   });
 
+  // Timer anpassen
   socket.on('adjustTimer', (adjustment) => {
     if (activeEvent) {
       activeEvent.duration += adjustment.adjustmentInSeconds;
@@ -220,39 +246,56 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Timer abbrechen (von Flutter-App)
   socket.on('abortTimer', () => {
-    // Sofortiger Abbruch, IMMER, wenn es aus der App kommt
+    console.log('Abbruch-Befehl von App erhalten');
+    
+    // Serientimeout abbrechen falls vorhanden
+    if (pendingSeriesTimeout) {
+      clearTimeout(pendingSeriesTimeout);
+      pendingSeriesTimeout = null;
+    }
+    
+    // Wenn Event aktiv, auf 0 setzen und Benachrichtigung auslösen
     if (activeEvent) {
-      activeEvent.duration = 0;
-      io.emit('timerExpired', activeEvent);
-      console.log(`Timer abgelaufen (abgebrochen): ${JSON.stringify(activeEvent)}`);
+      const eventToExpire = {...activeEvent};
       activeEvent = null;
+      
+      eventToExpire.duration = 0;
+      io.emit('timerExpired', eventToExpire);
+      console.log(`Timer abgebrochen: ${JSON.stringify(eventToExpire)}`);
     } else {
       io.emit('timerAborted', {});
-      console.log('Timer aborted for all clients.');
+      console.log('Kein aktiver Timer zum Abbrechen');
     }
   });
 
+  // Benachrichtigung manuell auslösen
   socket.on('triggerNotification', () => {
     io.emit('playNotification');
     console.log('Manuelle Benachrichtigung ausgelöst');
   });
 
+  // Client-Verbindung getrennt
   socket.on('disconnect', () => {
     connectionCount--;
     io.emit('connectionCount', connectionCount);
-    console.log(`Client disconnected: ${socket.id}. Total: ${connectionCount}`);
+    console.log(`Client getrennt: ${socket.id}. Gesamt: ${connectionCount}`);
   });
 });
 
-// Regelmäßige Prüfung für abgelaufene Events
+/**
+ * Periodische Überprüfung für abgelaufene Events
+ */
 setInterval(() => {
   if (activeEvent) {
     const elapsedSeconds = (Date.now() - activeEvent.startTime) / 1000;
     if (elapsedSeconds >= activeEvent.duration) {
-      io.emit('timerExpired', activeEvent);
-      console.log(`Event natürlich abgelaufen: ${JSON.stringify(activeEvent)} – activeEvent zurückgesetzt.`);
+      console.log(`Event natürlich abgelaufen: ${JSON.stringify(activeEvent)}`);
+      const eventToExpire = {...activeEvent};
       activeEvent = null;
+      
+      io.emit('timerExpired', eventToExpire);
     }
   }
 }, 1000);
