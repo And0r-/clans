@@ -193,12 +193,14 @@ function handleEventStop(eventType) {
     
     if (activeEvent && activeEvent.id === eventType) {
       console.log(`Timer wird auf 0 gesetzt, da Serie beendet wurde`);
-      const eventToExpire = {...activeEvent};
-      activeEvent = null;
       
-      // Timer auf 0 setzen und Benachrichtigung auslösen
-      eventToExpire.duration = 0;
-      io.emit('timerExpired', eventToExpire);
+      // Bei Serienende Timer auf 0 setzen durch timerAdjusted statt timerExpired
+      activeEvent.duration = 0;
+      io.emit('timerAdjusted', activeEvent);
+      console.log(`Timer auf 0 gesetzt via timerAdjusted: ${JSON.stringify(activeEvent)}`);
+      
+      // Danach activeEvent zurücksetzen
+      activeEvent = null;
     }
     
     pendingSeriesTimeout = null;
@@ -256,14 +258,11 @@ io.on('connection', (socket) => {
       pendingSeriesTimeout = null;
     }
     
-    // Wenn Event aktiv, auf 0 setzen und Benachrichtigung auslösen
+    // Wenn Event aktiv, abbrechen und timerAborted senden (nicht timerExpired!)
     if (activeEvent) {
-      const eventToExpire = {...activeEvent};
+      console.log(`Timer abgebrochen: ${JSON.stringify(activeEvent)}`);
       activeEvent = null;
-      
-      eventToExpire.duration = 0;
-      io.emit('timerExpired', eventToExpire);
-      console.log(`Timer abgebrochen: ${JSON.stringify(eventToExpire)}`);
+      io.emit('timerAborted', {});
     } else {
       io.emit('timerAborted', {});
       console.log('Kein aktiver Timer zum Abbrechen');
@@ -292,10 +291,15 @@ setInterval(() => {
     const elapsedSeconds = (Date.now() - activeEvent.startTime) / 1000;
     if (elapsedSeconds >= activeEvent.duration) {
       console.log(`Event natürlich abgelaufen: ${JSON.stringify(activeEvent)}`);
-      const eventToExpire = {...activeEvent};
-      activeEvent = null;
       
-      io.emit('timerExpired', eventToExpire);
+      // Da der Client timerExpired nicht implementiert hat, setzen wir den Timer
+      // auf 0 und senden ein timerAdjusted Event
+      activeEvent.duration = 0;
+      io.emit('timerAdjusted', activeEvent);
+      console.log(`Timer auf 0 gesetzt via timerAdjusted: ${JSON.stringify(activeEvent)}`);
+      
+      // Danach activeEvent zurücksetzen
+      activeEvent = null;
     }
   }
 }, 1000);
