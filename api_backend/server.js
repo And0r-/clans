@@ -53,7 +53,7 @@ const eventMapping = {
 };
 
 // Schwellwert für die Serienerkennung (in ms)
-const SERIES_GAP_THRESHOLD = 5000; // 5 Sekunden Lücke zwischen Stop und Start
+const SERIES_GAP_THRESHOLD = 500; // 0.5 Sekunden Lücke zwischen Stop und Start
 
 /**
  * REST-Endpoints
