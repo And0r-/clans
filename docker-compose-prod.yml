@@ -1,7 +1,6 @@
 version: "3.8"
 
-x-logging:
-  &loki-logging
+x-logging: &loki-logging
   driver: loki
   options:
     loki-url: "http://10.100.126.2:3100/loki/api/v1/push"
@@ -34,7 +33,7 @@ services:
       - "3009:3009"
     volumes:
       - ./api_backend:/usr/src/app:cached
-      # - /usr/src/app/node_modules
+      - /usr/src/app/node_modules
     environment:
       - NODE_ENV=production
       - API_TOKEN=${API_TOKEN}
