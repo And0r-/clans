@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
+const cron = require('node-cron');
+const axios = require('axios');
 
 const app = express();
 app.use(cors());
@@ -9,6 +11,9 @@ app.use(express.json());
 
 // API_TOKEN aus den Umgebungsvariablen lesen
 const REQUIRED_API_TOKEN = process.env.API_TOKEN || '';
+
+// Discord Webhook Konfiguration
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
 // Middleware zur Überprüfung des API-Tokens
 const checkApiToken = (req, res, next) => {
@@ -54,6 +59,58 @@ const eventMapping = {
 
 // Schwellwert für die Serienerkennung (in ms)
 const SERIES_GAP_THRESHOLD = 500; // 0.5 Sekunden Lücke zwischen Stop und Start
+
+/**
+ * Discord Webhook Funktionen
+ */
+async function sendDiscordWebhook(message, retryCount = 0) {
+  // Prüfen ob Discord Webhook URL konfiguriert ist
+  if (!DISCORD_WEBHOOK_URL) {
+    console.warn('Discord Webhook URL nicht konfiguriert - Nachricht wird nicht gesendet');
+    return false;
+  }
+  
+  const maxRetries = 3;
+  const retryDelay = 20000; // 20 Sekunden zwischen Retries
+  
+  try {
+    console.log(`Sende Discord Webhook: ${message}`);
+    
+    await axios.post(DISCORD_WEBHOOK_URL, {
+      content: `@here ${message}`,
+      username: 'Idle Clans Bot'
+    }, {
+      timeout: 10000 // 10 Sekunden Timeout
+    });
+    
+    console.log('Discord Webhook erfolgreich gesendet');
+    return true;
+  } catch (error) {
+    console.error(`Discord Webhook Fehler (Versuch ${retryCount + 1}/${maxRetries + 1}):`, error.message);
+    
+    if (retryCount < maxRetries) {
+      console.log(`Wiederhole Discord Webhook in ${retryDelay / 1000} Sekunden...`);
+      setTimeout(() => {
+        sendDiscordWebhook(message, retryCount + 1);
+      }, retryDelay);
+    } else {
+      console.error('Discord Webhook endgültig fehlgeschlagen nach allen Versuchen');
+    }
+    return false;
+  }
+}
+
+/**
+ * Geplante Benachrichtigungen
+ */
+// Täglich um 19:58 Uhr (Zeitzone Europa/Zürich)
+cron.schedule('58 19 * * *', () => {
+  console.log('Sende tägliche 19:58 Benachrichtigung');
+  sendDiscordWebhook('🎮 Events starten gleich! Bereit machen für Idle Clans Events!');
+}, {
+  scheduled: true,
+  timezone: "Europe/Zurich"
+});
 
 /**
  * REST-Endpoints
@@ -195,9 +252,13 @@ function handleEventStop(eventType) {
       console.log(`Timer wird auf 0 gesetzt, da Serie beendet wurde`);
       
       // Bei Serienende Timer auf 0 setzen durch timerAdjusted statt timerExpired
+      const eventName = activeEvent.name;
       activeEvent.duration = 0;
       io.emit('timerAdjusted', activeEvent);
       console.log(`Timer auf 0 gesetzt via timerAdjusted: ${JSON.stringify(activeEvent)}`);
+      
+      // Discord Webhook für Event-Ende senden
+      sendDiscordWebhook(`🏁 Event "${eventName}" ist beendet!`);
       
       // Danach activeEvent zurücksetzen
       activeEvent = null;
@@ -294,9 +355,13 @@ setInterval(() => {
       
       // Da der Client timerExpired nicht implementiert hat, setzen wir den Timer
       // auf 0 und senden ein timerAdjusted Event
+      const eventName = activeEvent.name;
       activeEvent.duration = 0;
       io.emit('timerAdjusted', activeEvent);
       console.log(`Timer auf 0 gesetzt via timerAdjusted: ${JSON.stringify(activeEvent)}`);
+      
+      // Discord Webhook für Event-Ende senden
+      sendDiscordWebhook(`🏁 Event "${eventName}" ist beendet!`);
       
       // Danach activeEvent zurücksetzen
       activeEvent = null;
