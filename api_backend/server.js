@@ -47,13 +47,16 @@ let clanSettings = {
 let activeEvent = null;
 let connectionCount = 0;
 let pendingSeriesTimeout = null;
+let lastStopEventTime = {}; // Track last stop event time per event type to deduplicate
+let lastEventDurations = {}; // Track last actual duration per event type
+let seriesRoundCount = 0; // Track which round we're in for a series
 
 // Mapping für Event-Typen
 const eventMapping = {
   "Gathering": { name: "Sammel", duration: 12 * 60 },
   "Crafting": { name: "Herstellung", duration: 8 * 60 },
-  "CombatBigExpDaily": { name: "Kampferfahrung", duration: 20 * 60 },
-  "CombatBigLootDaily": { name: "Kampfbelohnung", duration: 20 * 60 },
+  "CombatBigExpDaily": { name: "Kampferfahrung", duration: 10 * 60 },
+  "CombatBigLootDaily": { name: "Kampfbelohnung", duration: 10 * 60 },
   "SkillingParty": { name: "Skilling Gruppe", duration: 2 * 60 }
 };
 
@@ -67,6 +70,21 @@ async function sendDiscordWebhook(message, retryCount = 0) {
   // Prüfen ob Discord Webhook URL konfiguriert ist
   if (!DISCORD_WEBHOOK_URL) {
     console.warn('Discord Webhook URL nicht konfiguriert - Nachricht wird nicht gesendet');
+    return false;
+  }
+  
+  // Zeitbasierte Filterung: Discord-Benachrichtigungen nur zwischen 19:55 und 21:30 Uhr
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+  const currentTimeInMinutes = currentHour * 60 + currentMinute;
+  
+  // 19:55 = 1195 Minuten, 21:30 = 1290 Minuten
+  const startTimeInMinutes = 19 * 60 + 55; // 1195
+  const endTimeInMinutes = 21 * 60 + 30;   // 1290
+  
+  if (currentTimeInMinutes < startTimeInMinutes || currentTimeInMinutes > endTimeInMinutes) {
+    console.log(`Discord-Benachrichtigung außerhalb der erlaubten Zeit (19:55-21:30) - wird nicht gesendet. Aktuelle Zeit: ${currentHour}:${String(currentMinute).padStart(2, '0')}`);
     return false;
   }
   
@@ -122,7 +140,9 @@ app.get('/debug/status', (req, res) => {
     activeEvent,
     connectionCount,
     pendingSeriesTimeout: pendingSeriesTimeout !== null,
-    mappedEvents: eventMapping
+    mappedEvents: eventMapping,
+    lastEventDurations,
+    seriesRoundCount
   });
 });
 
@@ -145,7 +165,16 @@ app.post('/minigame/:action/:type', (req, res) => {
   const { action, type } = req.params;
   const metadata = req.body?.metadata || {};
   
-  console.log(`Webhook empfangen: ${action}/${type} von ${metadata.playerName || 'unbekannt'}`);
+  console.log(`Webhook empfangen: ${action}/${type} von ${metadata.playerName || 'unbekannt'} (Clan: ${metadata.clanName || 'unbekannt'})`);
+  
+  // Clan-Validierung: Nur Requests von "RosaEinhorn" Clan-Mitgliedern verarbeiten
+  if (metadata.clanName !== 'RosaEinhorn') {
+    console.log(`Request von fremdem Clan ignoriert: ${metadata.clanName || 'unbekannt'}`);
+    return res.status(403).json({ 
+      error: 'Nicht autorisierter Clan',
+      message: 'Nur Mitglieder des Clans RosaEinhorn können Events auslösen'
+    });
+  }
   
   if (!eventMapping[type]) {
     return res.status(400).json({ 
@@ -161,6 +190,7 @@ app.post('/minigame/:action/:type', (req, res) => {
     return res.status(200).json({ 
       success: true, 
       message: `Start-Event für ${type} verarbeitet`,
+      player: metadata.playerName || 'unbekannt',
       activeEvent: activeEvent ? {
         id: activeEvent.id,
         name: activeEvent.name,
@@ -175,6 +205,7 @@ app.post('/minigame/:action/:type', (req, res) => {
     return res.status(200).json({ 
       success: true, 
       message: `Stop-Event für ${type} verarbeitet`,
+      player: metadata.playerName || 'unbekannt',
       activeEvent: activeEvent ? {
         id: activeEvent.id,
         name: activeEvent.name,
@@ -201,16 +232,43 @@ function handleEventStart(eventType) {
     console.log(`Start von ${eventType} erkannt während eines ausstehenden Series-Timeouts - Serie wird fortgesetzt`);
     clearTimeout(pendingSeriesTimeout);
     pendingSeriesTimeout = null;
+    seriesRoundCount++; // Erhöhe Rundenzähler bei Serie
+  } else {
+    seriesRoundCount = 1; // Erste Runde einer neuen Serie oder einzelnes Event
   }
 
   // Wenn kein Event aktiv ist, starten wir ein neues
   if (!activeEvent) {
-    console.log(`Starte neues Event: ${eventType}`);
+    console.log(`Starte neues Event: ${eventType} (Runde ${seriesRoundCount})`);
+    
+    // Bestimme die Dauer basierend auf gespeicherten Werten
+    let duration = eventMapping[eventType].duration; // Standard-Dauer
+    
+    // Nur bei Kampf-Events verwenden wir dynamische Zeiten
+    if (eventType === 'CombatBigExpDaily' || eventType === 'CombatBigLootDaily') {
+      // Wenn wir eine gespeicherte Dauer für diesen Event-Typ haben, nutze sie
+      if (lastEventDurations[eventType]) {
+        const lastDuration = lastEventDurations[eventType];
+        console.log(`Kampf-Event: Verwende letzte bekannte Dauer für ${eventType}: ${lastDuration} Sekunden`);
+        duration = lastDuration;
+      }
+      
+      // Bei Kampf-Events in Runde 2: Verwende die Dauer der ersten Runde
+      if (seriesRoundCount === 2) {
+        console.log(`Kampf-Serie Runde 2: Verwende Dauer der ersten Runde`);
+        // Die Dauer der ersten Runde wurde bereits in lastEventDurations gespeichert
+      }
+    } else {
+      // Für alle anderen Events: Verwende immer die Standard-Dauer
+      console.log(`Nicht-Kampf-Event ${eventType}: Verwende feste Standard-Dauer von ${duration} Sekunden`);
+    }
+    
     activeEvent = {
       id: eventType,
       name: eventMapping[eventType].name,
-      duration: eventMapping[eventType].duration,
-      startTime: Date.now()
+      duration: duration,
+      startTime: Date.now(),
+      round: seriesRoundCount
     };
     
     io.emit('eventStarted', activeEvent);
@@ -236,12 +294,32 @@ function handleEventStop(eventType) {
     return;
   }
 
+  // Duplicate Stop Event Detection
+  const now = Date.now();
+  const lastStop = lastStopEventTime[eventType] || 0;
+  const timeSinceLastStop = now - lastStop;
+  
+  // Wenn innerhalb von 2 Sekunden bereits ein Stop-Event für diesen Typ kam, ignorieren
+  if (timeSinceLastStop < 2000) {
+    console.log(`Dupliziertes Stop-Event für ${eventType} ignoriert (${timeSinceLastStop}ms seit letztem Stop)`);
+    return;
+  }
+  
+  lastStopEventTime[eventType] = now;
+
   // Timeout für mögliches Serienende setzen
   console.log(`Stop für ${eventType} erkannt - warte auf möglichen Serienfolge-Start`);
   
   // Wenn bereits ein Timeout existiert, löschen
   if (pendingSeriesTimeout) {
     clearTimeout(pendingSeriesTimeout);
+  }
+  
+  // Speichere die tatsächliche Dauer nur bei Kampf-Events
+  if (eventType === 'CombatBigExpDaily' || eventType === 'CombatBigLootDaily') {
+    const actualDuration = Math.floor((Date.now() - activeEvent.startTime) / 1000);
+    lastEventDurations[eventType] = actualDuration;
+    console.log(`Kampf-Event: Tatsächliche Dauer von ${eventType}: ${actualDuration} Sekunden gespeichert`);
   }
   
   // Neuen Timeout setzen
@@ -262,6 +340,7 @@ function handleEventStop(eventType) {
       
       // Danach activeEvent zurücksetzen
       activeEvent = null;
+      seriesRoundCount = 0; // Reset Rundenzähler
     }
     
     pendingSeriesTimeout = null;
@@ -323,6 +402,7 @@ io.on('connection', (socket) => {
     if (activeEvent) {
       console.log(`Timer abgebrochen: ${JSON.stringify(activeEvent)}`);
       activeEvent = null;
+      seriesRoundCount = 0; // Reset Rundenzähler bei Abbruch
       io.emit('timerAborted', {});
     } else {
       io.emit('timerAborted', {});
@@ -353,6 +433,12 @@ setInterval(() => {
     if (elapsedSeconds >= activeEvent.duration) {
       console.log(`Event natürlich abgelaufen: ${JSON.stringify(activeEvent)}`);
       
+      // Speichere die tatsächliche Dauer nur bei Kampf-Events
+      if (activeEvent.id === 'CombatBigExpDaily' || activeEvent.id === 'CombatBigLootDaily') {
+        lastEventDurations[activeEvent.id] = Math.floor(elapsedSeconds);
+        console.log(`Kampf-Event: Tatsächliche Dauer von ${activeEvent.id}: ${Math.floor(elapsedSeconds)} Sekunden gespeichert (natürlicher Ablauf)`);
+      }
+      
       // Da der Client timerExpired nicht implementiert hat, setzen wir den Timer
       // auf 0 und senden ein timerAdjusted Event
       const eventName = activeEvent.name;
@@ -365,6 +451,7 @@ setInterval(() => {
       
       // Danach activeEvent zurücksetzen
       activeEvent = null;
+      seriesRoundCount = 0; // Reset Rundenzähler
     }
   }
 }, 1000);
