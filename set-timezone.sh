@@ -7,8 +7,10 @@ echo "🕐 Zeitzone Setup Script"
 echo "========================"
 
 # Prüfe ob als root ausgeführt
-if [ "$EUID" -ne 0 ]; then 
-    echo "❌ Bitte als root ausführen: sudo $0"
+if [ "$(id -u)" -ne 0 ]; then 
+    echo "❌ Bitte als root ausführen:"
+    echo "   su -c '$0'"
+    echo "   oder eingeloggt als root"
     exit 1
 fi
 
