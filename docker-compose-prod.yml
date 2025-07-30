@@ -38,4 +38,5 @@ services:
       - NODE_ENV=production
       - API_TOKEN=${API_TOKEN}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - TZ=Europe/Zurich
     logging: *loki-logging

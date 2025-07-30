@@ -24,3 +24,4 @@ services:
       - NODE_ENV=development
       - API_TOKEN=${API_TOKEN}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - TZ=Europe/Zurich
